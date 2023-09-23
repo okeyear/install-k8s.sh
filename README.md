@@ -14,11 +14,13 @@ Requirement: ssh no need password to master/worker node
 
 Requirement: ssh no need password to master/worker node
 
+yum/apt repo: to install packages wget curl vim jq etc
 
 ## Offline Install
 
 ### Step 1. On the server (Access Internet direct/proxy)
 ```shell
+# dowload k8s.sh, git clone or curl raw, only need single file k8s.sh
 bash k8s.sh download
 # in China, instead of "downloadcn"
 ```
@@ -28,6 +30,7 @@ Copy these files:
 - calico.tar.zst
 - k8simages.tar.zst
 - k8srpms.tar.zst
+- k8s.sh
 
 To your destination server (or jumpserver/client/ansible)
 

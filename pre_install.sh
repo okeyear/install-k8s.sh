@@ -14,7 +14,7 @@ source /etc/profile.d/localbin.sh
 # sudo yum update -y --exclude=kernel*
 # update kernel
 # https://github.com/okeyear/scripts/blob/main/shell/update_kernel_el.sh
-# curl -sSL https://raw.githubusercontent.com/okeyear/scripts/main/shell/update_kernel_el.sh | sudo sh - 
+# curl -sSL https://raw.githubusercontent.com/okeyear/scripts/main/shell/update_kernel_el.sh | sudo sh -
 # reboot
 
 ###################
@@ -29,22 +29,21 @@ else
 fi
 
 # Package Manager:  yum / apt / apk
-case $ID in 	
-	centos) 
-		export PM='yum' 
-    sudo curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo
-    # curl -sSL https://raw.githubusercontent.com/okeyear/scripts/main/shell/update_kernel_el.sh | sudo sh - 
-		;;
-	almalinux) 
-		export PM='yum' 
-		# set mirrors
-		sudo sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-		  -e 's|^#.*baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
-		  -i.bak \
-		  /etc/yum.repos.d/almalinux*.repo
-		  ;;
+case $ID in
+centos)
+	export PM='yum'
+	sudo curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo
+	# curl -sSL https://raw.githubusercontent.com/okeyear/scripts/main/shell/update_kernel_el.sh | sudo sh -
+	;;
+almalinux)
+	export PM='yum'
+	# set mirrors
+	sudo sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+		-e 's|^#.*baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
+		-i.bak \
+		/etc/yum.repos.d/almalinux*.repo
+	;;
 esac
-
 
 sudo yum install -y wget curl vim jq psmisc vim net-tools telnet git yum-utils device-mapper-persistent-data lvm2 lrzsz rsync zstd
 # sudo yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
@@ -53,7 +52,7 @@ sudo yum install -y wget curl vim jq psmisc vim net-tools telnet git yum-utils d
 ###################
 
 # 3. firewall
-# centos7 禁用NetworkManager, centos8不用禁用
+# centos7 禁用NetworkManager, rhel8+不用禁用
 # systemctl disable --now firewalld dnsmasq NetworkManager
 sudo systemctl disable --now firewalld
 sudo firewall-cmd --state
@@ -70,6 +69,8 @@ sudo sed -i '/^SELINUX=/cSELINUX=disabled' /etc/selinux/config /etc/sysconfig/se
 sudo sestatus
 
 # 5. swap
+# TODO
+# Swap has been supported since v1.22. And since v1.28, Swap is supported for cgroup v2 only
 sudo swapoff -a && sudo sysctl -w vm.swappiness=0
 # sed -i 's/.*swap.*/#&/' /etc/fstab
 sudo sed -e '/swap/s/^/#/g' -i /etc/fstab
@@ -147,7 +148,7 @@ EOF
 sudo sysctl --system
 
 ###################
-# 10. ipvsadm 
+# 10. ipvsadm
 # kube-proxy支持 iptables 和 ipvs 两种模式
 # http://www.linuxvirtualserver.org/software/
 sudo yum install -y ipset ipvsadm sysstat conntrack libseccomp
@@ -198,5 +199,5 @@ EOF
 # EOF
 
 # after reboot, check below:
-lsmod | grep -e ip_vs -e nf_conntrack 
+lsmod | grep -e ip_vs -e nf_conntrack
 lsmod | grep -e overlay -e br_netfilter

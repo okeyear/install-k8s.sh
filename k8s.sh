@@ -22,6 +22,7 @@ else
 EOF
     exit 1
 fi
+
 #####################
 # functions part
 #####################
@@ -170,9 +171,9 @@ function help_message() {
 
     Deploy Commands:
     install         Deploy Control Plane on localhost
-    controlplane    Deploy Control Plane on following ipaddress, if the number of ip > 1 , need args vip
+    controlplanes   Deploy Control Plane on following ipaddress, if the number of ip > 1 , need args vip
     vip             The VirtualServer IP for HA of Control Plane, Load Balancer IP
-    worker          Deploy Worker Node on following ipaddress
+    workers         Deploy Worker Node on following ipaddress
 
 
     Cluster Management Commands:
@@ -200,7 +201,149 @@ EOF
 }
 
 #####################
-# download part
+# functions init (pre_install.sh)
+#####################
+
+function pre_install() {
+    # packages
+    for s in wget curl tar vim jq git lvm2 rsync zstd; do
+        install_soft $s
+    done
+    #
+    # 3. firewall
+    # centos7 禁用NetworkManager, rhel8+不用禁用
+    # systemctl disable --now firewalld dnsmasq NetworkManager
+    sudo systemctl disable --now firewalld
+    sudo firewall-cmd --state
+    # master节点
+    # sudo firewall-cmd --permanent --add-port={53,179,5000,2379,2380,6443,10248,10250,10251,10252,10255}/tcp
+    # node节点
+    # sudo firewall-cmd --permanent --add-port={10250,30000-32767}/tcp
+    # 重新加载防火墙
+    # sudo firewall-cmd --reload
+
+    # 4. selinux
+    sudo setenforce 0
+    sudo sed -i '/^SELINUX=/cSELINUX=disabled' /etc/selinux/config /etc/sysconfig/selinux
+    sudo sestatus
+
+    # 5. swap
+    # TODO
+    # Swap has been supported since v1.22. And since v1.28, Swap is supported for cgroup v2 only
+    sudo swapoff -a && sudo sysctl -w vm.swappiness=0
+    # sed -i 's/.*swap.*/#&/' /etc/fstab
+    sudo sed -e '/swap/s/^/#/g' -i /etc/fstab
+
+    # 6. timezone
+    sudo timedatectl set-timezone Asia/Shanghai
+
+    # 7. ntp chrony
+    sudo yum install -y chrony
+    sudo sed -i '/^server/d' /etc/chrony.conf
+    sudo sed -i '/^pool/d' /etc/chrony.conf
+    sudo tee -a /etc/chrony.conf <<EOF
+#server ntp.aliyun.com iburst
+server time.windows.com iburst
+#server ntp.tencent.com iburst
+#server cn.ntp.org.cn iburst
+EOF
+
+    sudo systemctl enable --now chronyd
+    sudo systemctl restart chronyd
+
+    # 8. limits, nofile nproc
+    sudo ulimit -SHn 65535
+    sudo tee /etc/security/limits.d/20-nproc.conf <<EOF
+*          soft    nproc     655350
+*          hard    nproc     655350
+root       soft    nproc     unlimited
+EOF
+
+    sudo tee /etc/security/limits.d/nofile.conf <<EOF
+*          soft    nofile     655350
+*          hard    nofile     655350
+EOF
+
+    sudo tee /etc/security/limits.d/memlock.conf <<EOF
+*          soft    memlock    unlimited
+*          hard    memlock    unlimited
+EOF
+
+    # 9. kernel 设置内核参数
+    cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+    cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+# ERROR FileContent--proc-sys-net-ipv4-ip_forward
+net.ipv4.ip_forward=1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+
+net.ipv4.tcp_tw_recycle=0
+net.ipv4.tcp_keepalive_time=600
+net.ipv4.tcp_keepalive_probes=3
+net.ipv4.tcp_keepalive_intvl=15
+net.ipv4.tcp_max_tw_buckets=36000
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_max_orphans=327680
+net.ipv4.tcp_syncookies=1
+net.ipv4.tcp_max_syn_backlog=16384
+net.ipv4.ip_conntrack_max=131072
+net.ipv4.tcp_timestamps=0
+net.core.somaxconn=16384
+
+vm.swappiness=0
+vm.overcommit_memory=1
+vm.panic_on_oom=0
+fs.inotify.max_user_instances=8192
+fs.inotify.max_user_watches=1048576
+fs.file-max=52706963
+fs.nr_open=52706963
+fs.may_detach_mounts=1
+net.ipv6.conf.all.disable_ipv6=1
+net.netfilter.nf_conntrack_max=2310720  
+EOF
+
+    sudo sysctl --system
+
+    ###################
+    # 10. ipvsadm
+    # kube-proxy支持 iptables 和 ipvs 两种模式
+    # http://www.linuxvirtualserver.org/software/
+    sudo yum install -y ipset ipvsadm sysstat conntrack libseccomp
+    sudo mkdir -pv /etc/systemd/system/kubelet.service.d
+    # kernel 4.19+中 nf_conntrack_ipv4 改为 nf_conntrack
+    cat <<EOF | sudo tee /etc/modules-load.d/ipvs.conf
+ip_vs
+# ip_vs_lc
+# ip_vs_wlc
+ip_vs_rr
+ip_vs_wrr
+# ip_vs_lblc
+# ip_vs_lblcr
+# ip_vs_dh
+ip_vs_sh
+# ip_vs_fo
+# ip_vs_nq
+# ip_vs_sed
+# ip_vs_ftp
+# ip_vs_sh
+nf_conntrack
+# ip_tables
+# ip_set
+# xt_set
+# ipt_set
+# ipt_rpfilter
+# ipt_REJECT
+# ipip
+EOF
+
+}
+
+#####################
+# functions download part
 #####################
 
 function download_docker_image() {
@@ -217,16 +360,18 @@ function download_docker_image() {
 function download_containerd() {
     containerd_ver=$(get_github_latest_release "containerd/containerd")
     # containerd
-    # wget -c https://github.com/containerd/containerd/releases/download/$containerd_ver/containerd-${containerd_ver/v/}-linux-amd64.tar.gz
-    # containerd service
-    # wget -c https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
     containerd_ver=${containerd_ver/v/}
     # cri-containerd-cni 包含containerd
     download_filename="cri-containerd-cni-${containerd_ver}-linux-amd64.tar.gz"
     [ ! -s "${download_filename}" ] && wget -c "https://github.com/containerd/containerd/releases/download/v${containerd_ver}/${download_filename}"
+
     # download runc
     runc_ver=$(get_github_latest_release opencontainers/runc)
     wget -c https://github.com/opencontainers/runc/releases/download/${runc_ver}/runc.amd64
+
+    # download nerdctl
+    nerdctl_ver=$(get_github_latest_release "containerd/nerdctl")
+    wget -c "https://github.com/containerd/nerdctl/releases/download/${nerdctl_ver}/nerdctl-${nerdctl_ver/v/}-linux-amd64.tar.gz"
 }
 
 function download_calico() {
@@ -264,10 +409,6 @@ function download_kubeadm() {
 #         # wget -c "https://dl.k8s.io/${k8s_ver}/bin/linux/amd64/${pkg}.sha256"
 #     done
 # }
-
-#####################
-# functions download part
-#####################
 
 # require containerd zstd
 # temp folder
@@ -378,12 +519,10 @@ EOF
 }
 
 function download_offline() {
-    # yum install -y zstd
-    pwd
 
     # containerd & runc
     download_containerd
-    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
+    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64 ./nerdctl-*-linux-amd64.tar.gz
 
     download_calicoimages
     tar --remove-files --zstd -cf calico.tar.zst ./docker.io+calico*.tar ./calico.yaml
@@ -402,14 +541,14 @@ function download_offline() {
 
 function download_offlinecn() {
     # download from aliyun China
-    # yum install -y zstd
-    pwd
 
     # containerd & runc
     download_containerd
-    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
+    # todo: download image from China mirrors
+    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64 ./nerdctl-*-linux-amd64.tar.gz
 
     download_calicoimages
+    # todo: download image from China mirrors
     tar --remove-files --zstd -cf calico.tar.zst ./docker.io+calico*.tar ./calico.yaml
 
     download_k8simagescn
@@ -424,12 +563,16 @@ function download_offlinecn() {
 }
 
 function install_containerd() {
-    echo
+    # Install containerd and runc
+    # unzip
+    sudo tar -I zstd -xvf containerd.tar.zst
+    # install containerd
     sudo tar -xvf cri-containerd-cni-*-linux-amd64.tar.gz -C /
+    # install runc
     sudo install -m 755 runc.amd64* /usr/local/sbin/runc
     sudo mkdir /etc/containerd
     sudo /usr/local/bin/containerd config default | sudo tee /etc/containerd/config.toml
-    # config
+    # config containerd
     grep pause /etc/containerd/config.toml
     # systemd cgroup driver
     sudo sed -i.bak '/SystemdCgroup/s/false/true/' /etc/containerd/config.toml
@@ -440,53 +583,91 @@ function install_containerd() {
     # service
     sudo systemctl daemon-reload
     sudo systemctl enable --now containerd.service
+    # install nerdctl
+    sudo tar -xvf ./nerdctl-*-linux-amd64.tar.gz nerdctl
+    sudo install nerdctl /usr/bin/nerdctl
+    # alias docker
+    # echo "alias docker='nerdctl'" | sudo tee -a /etc/profile.d/alias.sh
 }
 
 function install_k8srpms() {
-    echo
-    sudo tar -I zstd -xvf kubernetes.repo.rpms.tar.zst
+    sudo tar -I zstd -xvf k8srpms.tar.zst
     sudo yum install -y ./kubernetes.repo.rpms/*.rpm
 }
 
-function install_controlplane() {
-    echo
-    sudo bash pre_install.sh
+function install_base() {
+    # kernel args
+    pre_install
+    # sudo bash pre_install.sh
+    # runtime containerd
     install_containerd
+    # rpm package: kubeadm kubectl kubelet
     install_k8srpms
-    sudo tar -I zstd -xvf kubenetes.tar.zst
-    #
-    kubeadm config print init-defaults --component-configs KubeletConfiguration | sudo tee /etc/kubernetes/kubeadm.yml
-    sudo sed -i "/name:/s/node/$(hostname)/" /etc/kubernetes/kubeadm.yml
+}
 
-    # 修改apiserver-advertise-address为本机的地址
-    defaultip=$(ip r get 1.1.1.1 | awk '/src/{print $7}')
-    sudo sed -i "/advertiseAddress/s/:.*$/: $defaultip/" /etc/kubernetes/kubeadm.yml
-    #
-    k8s_ver=$(curl https://storage.googleapis.com/kubernetes-release/release/stable.txt)
-    k8s_ver=${k8s_ver/v/}
-    sudo sed -i "/kubernetesVersion:/ckubernetesVersion: ${k8s_ver}" /etc/kubernetes/kubeadm.yml
-    # import images
-    for i in $(ls *:*.tar); do
-        sudo /usr/local/bin/ctr -n k8s.io images import "${i}" --platform linux/amd64
-    done
-    # sudo /usr/local/bin/ctr -n k8s.io images ls
-    # sudo nerdctl -n k8s.io images
+function scp_files() {
+    # scp or rsync
+    local des=$1
+    ssh "$des" "mkdir /tmp/k8s"
+    scp containerd.tar.zst "$des:/tmp/k8s/"
+    scp calico.tar.zst "$des:/tmp/k8s/"
+    scp k8simages.tar.zst "$des:/tmp/k8s/"
+    scp k8srpms.tar.zst "$des:/tmp/k8s/"
+    scp k8s.sh "$des:/tmp/k8s/"
+}
 
-    # 列出所需要的镜像列表
-    kubeadm config images list --config /etc/kubernetes/kubeadm.yml | sed 's/^/ctr image pull /g'
-    # 拉取镜像到本地
-    # sudo kubeadm config images pull --v=5 --config /etc/kubernetes/kubeadm.yml
-    sudo kubeadm init --v=9 --config /etc/kubernetes/kubeadm.yml --upload-certs --ignore-preflight-errors=ImagePull
+function install_controlplane() {
+    # TODO: kube-vip multi master node
+    if [ "${1}x" = "localhostx" ]; then
+        install_base
+        # k8s images from registry.k8s.io
+        sudo tar -I zstd -xvf k8simages.tar.zst
+        # kubeadm init config file
+        kubeadm config print init-defaults --component-configs KubeletConfiguration | sudo tee /etc/kubernetes/kubeadm.yml
+        sudo sed -i "/name:/s/node/$(hostname)/" /etc/kubernetes/kubeadm.yml
+        # TODO: kube-vip
+        # 修改apiserver-advertise-address为本机的地址
+        defaultip=$(ip r get 1.1.1.1 | awk '/src/{print $7}')
+        sudo sed -i "/advertiseAddress/s/:.*$/: $defaultip/" /etc/kubernetes/kubeadm.yml
+        # get latest version
+        k8s_ver=$(curl https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+        k8s_ver=${k8s_ver/v/}
+        sudo sed -i "/kubernetesVersion:/ckubernetesVersion: ${k8s_ver}" /etc/kubernetes/kubeadm.yml
+        # import downloaded images
+        for i in $(ls ./*:*.tar); do
+            sudo /usr/local/bin/ctr -n k8s.io images import "${i}" --platform linux/amd64
+        done
+        # sudo /usr/local/bin/ctr -n k8s.io images ls
+        # sudo nerdctl -n k8s.io images
 
-    mkdir -p $HOME/.kube
-    sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-    sudo chown $(id -u):$(id -g) $HOME/.kube/config
-    # export KUBECONFIG=/etc/kubernetes/admin.conf
-    export KUBECONFIG=$HOME/.kube/config
-    kubectl create -f calico.yaml
-    # worker node join command
-    kubeadm token create --print-join-command
-    # worker node join command: recreate
+        # 列出所需要的镜像列表
+        kubeadm config images list --config /etc/kubernetes/kubeadm.yml | sed 's/^/ctr image pull /g'
+        # 拉取镜像到本地
+        # sudo kubeadm config images pull --v=5 --config /etc/kubernetes/kubeadm.yml
+        # cluster init
+        # skip image verify (it need access internet to registry.k8s.io): --ignore-preflight-errors=* or ImagePull
+        sudo kubeadm init --v=9 --config /etc/kubernetes/kubeadm.yml --upload-certs --ignore-preflight-errors=ImagePull
+        # after successful init
+        mkdir -p $HOME/.kube
+        sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        sudo chown $(id -u):$(id -g) $HOME/.kube/config
+        # export KUBECONFIG=/etc/kubernetes/admin.conf
+        export KUBECONFIG=$HOME/.kube/config
+        kubectl create -f calico.yaml
+        # worker node join command
+        # kubeadm token create --print-join-command
+        # worker node join command: recreate
+    else
+        IFS=','                   # space is set as delimiter
+        read -ra ADDR <<<"$1"     # str is read into an array as tokens separated by IFS
+        for i in "${ADDR[@]}"; do # access each element of array
+            echo "Working on controlplane $i:"
+            scp_files "$i"
+            # install runtime & kubelet kubeadm kebectl
+            ssh $i "sudo bash /tmp/k8s/k8s.sh install_base"
+            # todo
+        done
+    fi
 }
 
 function get_kubeadm_join_cmd() {
@@ -497,12 +678,27 @@ function get_kubeadm_join_cmd() {
 }
 
 function install_workernode() {
-    echo
-    sudo bash pre_install.sh
-    install_containerd
-    install_k8srpms
+    IFS=','                   # space is set as delimiter
+    read -ra ADDR <<<"$1"     # str is read into an array as tokens separated by IFS
+    for i in "${ADDR[@]}"; do # access each element of array
+        echo "Working on worker $i:"
+        scp_files "$i"
+        # install runtime & kubelet kubeadm kebectl
+        ssh $i "sudo bash /tmp/k8s/k8s.sh install_base"
+        # join to k8s cluster
+        joincmd=$(get_kubeadm_join_cmd)
+        ssh $i "sudo ${joincmd}"
+    done
     # exec get_kubeadm_join_cmd
 }
+
+# function read_ip() {
+#     IFS=','                   # space is set as delimiter
+#     read -ra ADDR <<<"$1"     # str is read into an array as tokens separated by IFS
+#     for i in "${ADDR[@]}"; do # access each element of array
+#         echo "$i"
+#     done
+# }
 
 #####################
 # functions main part
@@ -517,18 +713,22 @@ case $1 in
     download_offlinecn
     shift
     ;;
---controlplane | controlplane | --master | master)
+--controlplanes | controlplanes | --masters | masters)
     ipaddrs=$2
-    install_controlplane # $ipaddrs
+    install_controlplane "$ipaddrs"
     shift 2
     ;;
 --install | install)
-    install_controlplane # $ipaddrs
+    install_controlplane "localhost"
     shift
     ;;
---worker | worker)
+--install_base | install_base)
+    install_base
+    shift
+    ;;
+--workers | workers)
     ipaddrs=$2
-    install_workernode # $ipaddrs
+    install_workernode "$ipaddrs"
     shift 2
     ;;
 -v | --version | version)
