@@ -5,27 +5,49 @@ Install k8s online offline via kubeadm
 [ x ] Only support: CentOS 7, Alma/Rocky Linux 8/9
 [  ]  Not ready yet.
 
+## Requirement
+Requirement: ssh no need password to master/worker node
+
+Requirement: ssh no need password to master/worker node
+
+Requirement: ssh no need password to master/worker node
+
+
 ## Offline Install
 
+### Step 1. On the server (Access Internet)
 ```shell
 bash k8s.sh download
 # in China, instead of "downloadcn"
 ```
-
+### Step 2. Copy Files
 Copy these files:
 - containerd.tar.zst
 - calico.tar.zst
 - k8simages.tar.zst
 - k8srpms.tar.zst
 
-To your destination server (or jumpserver/client/ansible server)
+To your destination server (or jumpserver/client/ansible)
+
+### Step 3. On Destination server (Can Not Access Internet)
+#### Step 3.1 Install on Single Server
+
+`Master Node(Your are here)`
+
+```shell
+# install controlplane on localhost
+bash k8s.sh install
+```
+#### Step 3.2 Install on Destination Server
+
+`Client(Your are here) --> Master Node --> Worker Node`
 
 
-On destination server
 ```shell
 # install control plane
 bash k8s.sh controlplane ip1
 bash k8s.sh controlplane ip1,ip2,ip3
+
 # install worker node
 bash k8s.sh worker ip2,ip3
 bash k8s.sh worker ip4,ip5,ip6

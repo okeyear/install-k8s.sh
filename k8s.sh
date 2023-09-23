@@ -508,10 +508,6 @@ function install_workernode() {
 # functions main part
 #####################
 
-# download_offline
-# rclone copy kubenetes.tar.zst webdav:Src/k8s/
-# rclone copy kubernetes.repo.rpms.tar.zst webdav:Src/k8s/
-
 case $1 in
 --download | download)
     download_offline
@@ -546,3 +542,9 @@ case $1 in
     echo_color green "$(echo_line)"
     ;;
 esac
+
+# download_offline
+# rclone copy calico.tar.zst webdav:Src/k8s/offline
+# rclone copy containerd.tar.zst webdav:Src/k8s/offline
+# rclone copy k8simages.tar.zst webdav:Src/k8s/offline
+# rclone copy k8srpms.tar.zst webdav:Src/k8s/offline
