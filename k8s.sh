@@ -273,10 +273,12 @@ function download_kubeadm() {
 # TMPFILE=$(mktemp -d) || exit 1
 # cd $TMPFILE
 
-function export_k8simages() {
+function export_images() {
     # export
-    for i in $(./kubeadm config images list --config kubeadm.yml); do
-        ctr -n k8s.io images export $(echo ${i/registry.k8s.io\//}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
+    keyword=$1
+    # for i in $(./kubeadm config images list -config kubeadm.yml); do
+    for i in $(ctr -n k8s.io images ls | grep $keyword | grep ':' | awk '{print $1}' | sed 's|@sha256.*||g'); do
+        ctr -n k8s.io images export $(echo ${i}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
     done
 }
 
@@ -293,7 +295,7 @@ function download_k8simages() {
     # ./kubeadm config images list --config kubeadm.yml | sed 's/^/ctr image pull /g'
     ./kubeadm config images pull --v=5 --config kubeadm.yml
     # curl -Ls "https://sbom.k8s.io/$(curl -Ls https://dl.k8s.io/release/stable.txt)/release" | grep "SPDXID: SPDXRef-Package-registry.k8s.io" |  grep -v sha256 | cut -d- -f3- | sed 's/-/\//' | sed 's/-v1/:v1/' | grep amd64
-    export_k8simages
+    export_images "registry.k8s.io"
 }
 
 function download_k8simagescn() {
@@ -317,7 +319,7 @@ function download_k8simagescn() {
     done
 
     # export
-    export_k8simages
+    export_images "registry.k8s.io"
 }
 
 function download_calicoimages() {
@@ -327,8 +329,9 @@ function download_calicoimages() {
     download_calico
     for i in $(grep 'image:' calico.yaml | awk '{print $2}'); do
         ctr -n k8s.io images pull $i
-        ctr -n k8s.io images export $(echo ${i/docker.io\//}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
     done
+    # export
+    export_images "calico"
 }
 
 function download_k8srpms() {
