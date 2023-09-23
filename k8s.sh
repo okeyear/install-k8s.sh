@@ -313,7 +313,7 @@ function download_k8simagescn() {
 
     # tag registry.cn-hangzhou.aliyuncs.com/google_containers --> registry.k8s.io
     for i in $(ctr -n k8s.io images ls | awk '/aliyun/{print $1}' | sed 's|@sha256.*||g' | grep ':'); do
-        ctr -n k8s.io tag "$i" "$(echo $i | sed 's|registry.cn-hangzhou.aliyuncs.com/google_containers|registry.k8s.io|')"
+        ctr -n k8s.io image tag "$i" "$(echo $i | sed 's|registry.cn-hangzhou.aliyuncs.com/google_containers|registry.k8s.io|')"
     done
 
     # export
