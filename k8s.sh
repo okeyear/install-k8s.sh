@@ -169,8 +169,10 @@ function help_message() {
     Deploy local k8s cluster via kubeadm.
 
     Deploy Commands:
-    controlplane    Deploy on Control Plane
-    worker          Deploy on Worker Node
+    install         Deploy Control Plane on localhost
+    controlplane    Deploy Control Plane on following ipaddress, if the number of ip > 1 , need args vip
+    vip             The VirtualServer IP for HA of Control Plane, Load Balancer IP
+    worker          Deploy Worker Node on following ipaddress
 
 
     Cluster Management Commands:
@@ -519,10 +521,14 @@ case $1 in
     download_offlinecn
     shift
     ;;
---controlplane | controlplane | --master | master | install | --install)
+--controlplane | controlplane | --master | master)
     ipaddrs=$2
     install_controlplane # $ipaddrs
     shift 2
+    ;;
+--install | install)
+    install_controlplane # $ipaddrs
+    shift
     ;;
 --worker | worker)
     ipaddrs=$2
