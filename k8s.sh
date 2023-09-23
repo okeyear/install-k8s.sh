@@ -3,7 +3,7 @@ export PATH=/snap/bin:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sb
 export LANG=en_US.UTF8
 # exit shell when error
 # set -e
-echo 'export PATH=/usr/local/bin:$PATH' | sudo tee /etc/profile.d/localbin.sh
+echo 'export PATH=/usr/local/bin:$PATH' | sudo tee /etc/profile.d/localbin.sh &>/dev/null
 # source /etc/profile.d/localbin.sh
 ###################
 
@@ -164,54 +164,35 @@ function get_os() {
 }
 
 function help_message() {
+    # todo
     cat <<EOF
     Deploy local k8s cluster via kubeadm.
 
+    Deploy Commands:
+    controlplane    Deploy on Control Plane
+    worker          Deploy on Worker Node
+
+
     Cluster Management Commands:
-    apply         Run cloud images within a kubernetes cluster with Clusterfile
-    cert          update Kubernetes API server's cert
-    run           Run cloud native applications with ease, with or without a existing cluster
-    reset         Reset all, everything in the cluster
-    status        state of sealos
+    # reset         Reset all, everything in the cluster
+    # status        state of sealos
 
     Node Management Commands:
-    add           Add nodes into cluster
-    delete        Remove nodes from cluster
-
-    Remote Operation Commands:
-    exec          Execute shell command or script on specified nodes
-    scp           Copy file to remote on specified nodes
-
-    Experimental Commands:
-    registry      registry related
+    # add           Add nodes into cluster
+    # delete        Remove nodes from cluster
 
     Container and Image Commands:
-    download      Download kubefile and container images
-    downloadcn    Download kubefile and container images on China
-    build         Build an image using instructions in a Containerfile or Kubefile
-    create        Create a cluster without running the CMD, for inspecting image
-    diff          Inspect changes to the object's file systems
-    inspect       Inspect the configuration of a container or image
-    images        List images in local storage
-    load          Load image(s) from archive file
-    login         Login to a container registry
-    logout        Logout of a container registry
-    manifest      Manipulate manifest lists and image indexes
-    merge         merge multiple images into one
-    pull          Pull images from the specified location
-    push          Push an image to a specified destination
-    rmi           Remove one or more images from local storage
-    save          Save image into archive file
-    tag           Add an additional name to a local image
+    download        Download kubefile and container images
+    downloadcn      Download kubefile and container images on China
+    # images        List images in local storage
+    # load          Load image(s) from archive file
+    # manifest      Manipulate manifest lists and image indexes
 
     Other Commands:
-    completion    Generate the autocompletion script for the specified shell
-    docs          generate API reference
-    env           prints out all the environment information in use by sealos
-    gen           generate a Clusterfile with all default settings
-    version       Print version info
+    # completion    Generate the autocompletion script for the specified shell
+    version         Print version info
 
-    Use "sealos <command> --help" for more information about a given command.
+    Use "bash k8s.sh <command> --help" for more information about a given command.
 EOF
 
 }
@@ -292,6 +273,13 @@ function download_kubeadm() {
 # TMPFILE=$(mktemp -d) || exit 1
 # cd $TMPFILE
 
+function export_k8simages() {
+    # export
+    for i in $(./kubeadm config images list --config kubeadm.yml); do
+        ctr -n k8s.io images export $(echo ${i/registry.k8s.io\//}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
+    done
+}
+
 function download_k8simages() {
     echo
     # download from registry.k8s.io
@@ -305,9 +293,31 @@ function download_k8simages() {
     # ./kubeadm config images list --config kubeadm.yml | sed 's/^/ctr image pull /g'
     ./kubeadm config images pull --v=5 --config kubeadm.yml
     # curl -Ls "https://sbom.k8s.io/$(curl -Ls https://dl.k8s.io/release/stable.txt)/release" | grep "SPDXID: SPDXRef-Package-registry.k8s.io" |  grep -v sha256 | cut -d- -f3- | sed 's/-/\//' | sed 's/-v1/:v1/' | grep amd64
-    for i in $(./kubeadm config images list --config kubeadm.yml); do
-        ctr -n k8s.io images export $(echo ${i/registry.k8s.io\//}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
+    export_k8simages
+}
+
+function download_k8simagescn() {
+    echo
+    # download from registry.k8s.io
+    download_kubeadm
+    chmod a+x kubeadm
+    k8s_ver=$(curl https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+    k8s_ver=${k8s_ver/v/}
+    ./kubeadm config print init-defaults --component-configs KubeletConfiguration | sudo tee kubeadm.yml
+    # kubernetesVersion: 1.28.0
+    sudo sed -i "/kubernetesVersion:/ckubernetesVersion: ${k8s_ver}" kubeadm.yml
+    # Aliyun China mirrors
+    sudo sed -i 's@registry.k8s.io@registry.cn-hangzhou.aliyuncs.com/google_containers@' kubeadm.yml
+    # ./kubeadm config images list --config kubeadm.yml | sed 's/^/ctr image pull /g'
+    ./kubeadm config images pull --v=5 --config kubeadm.yml
+
+    # tag registry.cn-hangzhou.aliyuncs.com/google_containers --> registry.k8s.io
+    for i in $(ctr -n k8s.io images ls | awk '/aliyun/{print $1}' | sed 's|@sha256.*||g' | grep ':'); do
+        ctr -n k8s.io tag "$i" "$(echo $i | sed 's|registry.cn-hangzhou.aliyuncs.com/google_containers|registry.k8s.io|')"
     done
+
+    # export
+    export_k8simages
 }
 
 function download_calicoimages() {
@@ -339,6 +349,29 @@ EOF
     # createrepo ./kubernetes.repo.rpms
 }
 
+function download_k8srpmscn() {
+    echo
+    # set k8s repo
+    cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+    # download k8s repo rpms
+    sudo yum install -y yum-download yum-plugin-downloadonly createrepo
+    # a. 如果下载的包包含了任何没有满足的依赖关系，yum将会把所有的依赖关系包下载，但是都不会被安装。
+    # sudo yum install -y --downloadonly --disableexcludes=kubernetes --downloaddir=./kubernetes.repo.rpms kubelet kubeadm kubectl
+    # b. yumdownloader会在下载过程中更新包索引文件。与yum命令不同的是，任何依赖包不会被下载。
+    sudo yum -y install yum-utils
+    yumdownloader --disableexcludes=kubernetes --downloaddir=./kubernetes.repo.rpms kubelet kubeadm kubectl kubernetes-cni cri-tools
+    # createrepo ./kubernetes.repo.rpms
+}
+
 function download_offline() {
     # yum install -y zstd
     pwd
@@ -353,22 +386,43 @@ function download_offline() {
     rm -rf calico*.tar calico.yaml
 
     download_k8simages
-    tar --zstd -cf kubenetes.tar.zst ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
+    tar --zstd -cf k8simages.tar.zst ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
     rm -rf ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
 
     download_k8srpms
-    tar --zstd -cf kubernetes.repo.rpms.tar.zst ./kubernetes.repo.rpms
+    tar --zstd -cf k8srpms.tar.zst ./kubernetes.repo.rpms
     rm -rf ./kubernetes.repo.rpms
 
     # clean
-    # rm -f ./*.tar calico.yaml kubeadm kubeadm.yml
+    rm -f ./kubeadm ./kubeadm.yml
     # cd -
 
 }
 
 function download_offlinecn() {
     # download from aliyun China
-    echo
+    # yum install -y zstd
+    pwd
+    # containerd & runc
+    download_containerd
+    tar --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
+    rm -rf cri-containerd-cni-*-linux-amd64.tar.gz runc.amd64
+
+    download_calicoimages
+    tar --zstd -cf calico.tar.zst ./calico*.tar ./calico.yaml
+    rm -rf calico*.tar calico.yaml
+
+    download_k8simagescn
+    tar --zstd -cf kubenetes.tar.zst ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
+    rm -rf ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
+
+    download_k8srpmscn
+    tar --zstd -cf kubernetes.repo.rpms.tar.zst ./kubernetes.repo.rpms
+    rm -rf ./kubernetes.repo.rpms
+
+    # clean
+    rm -f ./kubeadm ./kubeadm.yml
+    # cd -
 }
 
 function install_containerd() {
@@ -456,6 +510,37 @@ function install_workernode() {
 # functions main part
 #####################
 
-download_offline
+# download_offline
 # rclone copy kubenetes.tar.zst webdav:Src/k8s/
 # rclone copy kubernetes.repo.rpms.tar.zst webdav:Src/k8s/
+
+case $1 in
+--download | download)
+    download_offline
+    shift
+    ;;
+--downloadcn | --cn | downloadcn)
+    download_offlinecn
+    shift
+    ;;
+--controlplane | --master | master | controlplane)
+    ipaddrs=$2
+    install_controlplane # $ipaddrs
+    shift 2
+    ;;
+--worker | worker)
+    ipaddrs=$2
+    install_workernode # $ipaddrs
+    shift 2
+    ;;
+-v | --version | version)
+    tmp_version='0.0.1'
+    echo "${tmp_version}"
+    shift
+    ;;
+-h | --help | *)
+    echo_color green "$(echo_line)"
+    help_message
+    echo_color green "$(echo_line)"
+    ;;
+esac
