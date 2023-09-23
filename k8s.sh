@@ -277,7 +277,7 @@ function export_images() {
     # export
     keyword=$1
     # for i in $(./kubeadm config images list -config kubeadm.yml); do
-    for i in $(ctr -n k8s.io images ls | grep $keyword | grep ':' | awk '{print $1}' | sed 's|@sha256.*||g'); do
+    for i in $(ctr -n k8s.io images ls | grep $keyword | awk '{print $1}' | sed 's|@sha256.*||g' | grep ':'); do
         ctr -n k8s.io images export $(echo ${i}.tar | sed 's@/@+@g') "${i}" --platform linux/amd64
     done
 }
@@ -381,20 +381,16 @@ function download_offline() {
 
     # containerd & runc
     download_containerd
-    tar --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
-    rm -rf cri-containerd-cni-*-linux-amd64.tar.gz runc.amd64
+    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
 
     download_calicoimages
-    tar --zstd -cf calico.tar.zst ./calico*.tar ./calico.yaml
-    rm -rf calico*.tar calico.yaml
+    tar --remove-files --zstd -cf calico.tar.zst ./docker.io+calico*.tar ./calico.yaml
 
     download_k8simages
-    tar --zstd -cf k8simages.tar.zst ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
-    rm -rf ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
+    tar --remove-files --zstd -cf k8simages.tar.zst ./registry.k8s.io*.tar
 
     download_k8srpms
-    tar --zstd -cf k8srpms.tar.zst ./kubernetes.repo.rpms
-    rm -rf ./kubernetes.repo.rpms
+    tar --remove-files --zstd -cf k8srpms.tar.zst ./kubernetes.repo.rpms
 
     # clean
     rm -f ./kubeadm ./kubeadm.yml
@@ -406,22 +402,19 @@ function download_offlinecn() {
     # download from aliyun China
     # yum install -y zstd
     pwd
+
     # containerd & runc
     download_containerd
-    tar --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
-    rm -rf cri-containerd-cni-*-linux-amd64.tar.gz runc.amd64
+    tar --remove-files --zstd -cf containerd.tar.zst ./cri-containerd-cni-*-linux-amd64.tar.gz ./runc.amd64
 
     download_calicoimages
-    tar --zstd -cf calico.tar.zst ./calico*.tar ./calico.yaml
-    rm -rf calico*.tar calico.yaml
+    tar --remove-files --zstd -cf calico.tar.zst ./docker.io+calico*.tar ./calico.yaml
 
     download_k8simagescn
-    tar --zstd -cf kubenetes.tar.zst ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
-    rm -rf ./kube*.tar ./coredns*.tar ./etcd*.tar ./pause*.tar
+    tar --remove-files --zstd -cf k8simages.tar.zst ./registry.k8s.io*.tar
 
     download_k8srpmscn
-    tar --zstd -cf kubernetes.repo.rpms.tar.zst ./kubernetes.repo.rpms
-    rm -rf ./kubernetes.repo.rpms
+    tar --remove-files --zstd -cf k8srpms.tar.zst ./kubernetes.repo.rpms
 
     # clean
     rm -f ./kubeadm ./kubeadm.yml
@@ -526,7 +519,7 @@ case $1 in
     download_offlinecn
     shift
     ;;
---controlplane | --master | master | controlplane)
+--controlplane | controlplane | --master | master | install | --install)
     ipaddrs=$2
     install_controlplane # $ipaddrs
     shift 2
