@@ -1,8 +1,10 @@
 # install-k8s.sh
-Install k8s online offline via kubeadm
+Install k8s offline via kubeadm
 
 ## Roadmap
+
 [ x ] Only support: CentOS 7, Alma/Rocky Linux 8/9
+
 [  ]  Not ready yet.
 
 ## Requirement
