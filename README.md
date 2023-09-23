@@ -15,7 +15,7 @@ Requirement: ssh no need password to master/worker node
 
 ## Offline Install
 
-### Step 1. On the server (Access Internet)
+### Step 1. On the server (Access Internet direct/proxy)
 ```shell
 bash k8s.sh download
 # in China, instead of "downloadcn"
