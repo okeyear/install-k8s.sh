@@ -518,6 +518,41 @@ EOF
     # createrepo ./kubernetes.repo.rpms
 }
 
+function download_kubevip() {
+    export VIP='172.17.17.200'
+    INTERFACE=$(ip r get 1.1.1.1 | awk '/src/{print $5}')
+
+    KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+    # export KVVERSION='v0.6.0'
+
+    # 简化命令，将命令设置为别名
+    alias kube-vip="sudo /usr/local/bin/ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; sudo /usr/local/bin/ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+    # 执行命令创建yaml
+    kube-vip manifest pod \
+        --interface "$INTERFACE" \
+        --vip $VIP \
+        --controlplane \
+        --arp \
+        --leaderElection | sudo tee /etc/kubernetes/manifests/kube-vip.yaml
+
+    # 修改镜像策略
+    sudo sed -i 's/Always//g' /etc/kubernetes/manifests/kube-vip.yaml
+    # 修改镜像
+    # sudo sed -i 's@ghcr.io/kube-vip@docker.io/plndr@' /etc/kubernetes/manifests/kube-vip.yaml
+    sudo grep image: /etc/kubernetes/manifests/kube-vip.yaml
+
+    # 复制到其他master控制平面节点
+    # scp -rp kube-vip.yaml root@server-02:/etc/kubernetes/manifests/
+    # scp -rp kube-vip.yaml root@server-03:/etc/kubernetes/manifests/
+
+    # kubeadm.yml的这个类型kind
+    # kind: ClusterConfiguration
+    # 最后部分添加
+    # controlPlaneEndpoint: 172.17.17.200:6443  # 设置控制平面Endpoint地址
+    sudo sed -i "/ClusterConfiguration/acontrolPlaneEndpoint: $VIP:6443" /etc/kubernetes/kubeadm.yml
+    sudo grep -C1 ClusterConfiguration /etc/kubernetes/kubeadm.yml
+}
+
 function download_offline() {
 
     # containerd & runc
@@ -657,7 +692,9 @@ function install_controlplane() {
         # worker node join command
         # kubeadm token create --print-join-command
         # worker node join command: recreate
-    else
+    elif [[ "$1" == "*,*" ]]; then
+        # match ip1,ip2ip3....
+        # # kube-vip
         IFS=','                   # space is set as delimiter
         read -ra ADDR <<<"$1"     # str is read into an array as tokens separated by IFS
         for i in "${ADDR[@]}"; do # access each element of array
@@ -665,8 +702,14 @@ function install_controlplane() {
             scp_files "$i"
             # install runtime & kubelet kubeadm kebectl
             ssh $i "sudo bash /tmp/k8s/k8s.sh install_base"
-            # todo
+            # todo # kube-vip and vip in /etc/kubernetes/kubeadm.yml
         done
+    else
+        # need RE ip or not ?
+        # only 1 ip for control plane
+        scp_files "$1"
+        # install runtime & kubelet kubeadm kebectl
+        ssh "$1" "sudo bash /tmp/k8s/k8s.sh install_controlplane localhost"
     fi
 }
 
